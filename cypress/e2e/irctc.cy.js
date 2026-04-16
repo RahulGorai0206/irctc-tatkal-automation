@@ -21,10 +21,29 @@ describe('IRCTC TATKAL BOOKING', () => {
     cy.clearCookies()
     cy.clearLocalStorage()
     cy.viewport(1478, 1056)
-    cy.visit('https://www.irctc.co.in/nget/train-search', {
-      failOnStatusCode: false,
-      timeout: 90000
-    })
+    const visitWithRetry = (attempt = 1, maxAttempts = 3) => {
+      cy.visit('https://www.irctc.co.in/nget/train-search', {
+        failOnStatusCode: false,
+        timeout: 120000,
+        headers: {
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+          'Accept-Encoding': 'gzip, deflate, br',
+          'Accept-Language': 'en-US,en;q=0.9',
+          'Cache-Control': 'max-age=0',
+          'Connection': 'keep-alive',
+          'Sec-Ch-Ua': '"Google Chrome";v="123", "Not:A-Brand";v="8", "Chromium";v="123"',
+          'Sec-Ch-Ua-Mobile': '?0',
+          'Sec-Ch-Ua-Platform': '"Windows"',
+          'Sec-Fetch-Dest': 'document',
+          'Sec-Fetch-Mode': 'navigate',
+          'Sec-Fetch-Site': 'none',
+          'Sec-Fetch-User': '?1',
+          'Upgrade-Insecure-Requests': '1',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
+        }
+      })
+    }
+    visitWithRetry()
 
 
     cy.task("log", `Website Fetching completed.........`)
@@ -33,7 +52,8 @@ describe('IRCTC TATKAL BOOKING', () => {
 
     const isValidUpiId = upiRegex.test(UPI_ID);
 
-    cy.get('.h_head1 > .search_btn').click()
+    // Using a more robust text-based selector instead of fragile class names
+    cy.contains('LOGIN').should('be.visible').click()
     cy.get('input[placeholder="User Name"]').invoke('val', username).trigger('input')
     cy.get('input[placeholder="Password"]').invoke('val', password).trigger('input')
 
@@ -46,43 +66,44 @@ describe('IRCTC TATKAL BOOKING', () => {
         if (el[0].innerText.includes('Your Last Transaction')) {
           cy.get('.ui-dialog-footer > .ng-tns-c19-3 > .text-center > .btn').click()
         }
-    })
+      })
 
-      // from station
-      cy.get('.ui-autocomplete > .ng-tns-c57-8').should('be.visible').type(SOURCE_STATION, { delay: 600 })
+      // from station - using exact structural element rather than generated class
+      cy.get('p-autocomplete input').eq(0).should('be.visible').type(SOURCE_STATION, { delay: 0 })
       // cy.wait(600)
-      cy.get('#p-highlighted-option').should('be.visible').click()
+      cy.get('ul[role="listbox"]').should('be.visible').contains("li", SOURCE_STATION, { timeout: 10000 }).click()
 
       // to station
-      cy.get('.ui-autocomplete > .ng-tns-c57-9').should('be.visible').type(DESTINATION_STATION, { delay: 600 })
+      cy.get('p-autocomplete input').eq(1).should('be.visible').type(DESTINATION_STATION, { delay: 0 })
       // cy.wait(600)
-      cy.get('#p-highlighted-option').should('be.visible').click()
+      cy.get('ul[role="listbox"]').should('be.visible').contains("li", DESTINATION_STATION, { timeout: 10000 }).click()
 
       // date
-      cy.get('.ui-calendar').should('be.visible').click()
+      cy.get('p-calendar input').should('be.visible').click()
       // clearing the default date which is prefilled in the box
       cy.focused().clear()
       // filling the date
-      cy.get('.ui-calendar').type(TRAVEL_DATE)
-
-
+      cy.get('p-calendar input').type(TRAVEL_DATE, { delay: 0 })
+      
+      // Close the calendar popup by hitting Escape so it doesn't block the quota dropdown
+      cy.get('p-calendar input').type('{esc}')
 
       // TATKAL or NORMAL BOOKING
       if (TATKAL) {
         cy.get('#journeyQuota > .ui-dropdown').click()
-        cy.get(':nth-child(6) > .ui-dropdown-item').click()
-
+        cy.wait(300)
+        cy.contains('li', 'TATKAL', { matchCase: false }).should('be.visible').trigger('click')
       }
 
       if (PREMIUM_TATKAL) {
         cy.get('#journeyQuota > .ui-dropdown').click()
-        cy.get(':nth-child(7) > .ui-dropdown-item').click()
-
+        cy.wait(300)
+        cy.contains('li', 'PREMIUM TATKAL', { matchCase: false }).should('be.visible').trigger('click')
       }
 
-
       // search button
-      cy.get('.col-md-3 > .search_btn').click()
+      cy.wait(500) // Small delay to prevent IRCTC from flagging as bot/double-click
+      cy.contains('button', 'Search').should('not.be.disabled').click()
 
 
       // @@@@@ commenting this as IRCTC by default minimizes this now @@@@@
@@ -148,8 +169,8 @@ describe('IRCTC TATKAL BOOKING', () => {
               // Check if the passenger object contains 'NAME' property
               if (PASSENGER && PASSENGER['NAME']) {
                 cy.task("log", 'Passenger Filing STARTED......')
-                // Clear the input field and set its value to the passenger's name
-                cy.wrap(inputField).clear().type(PASSENGER['NAME']);
+                // Clear the input field and set its value to the passenger's name instantly
+                cy.wrap(inputField).clear().type(PASSENGER['NAME'], { delay: 0 });
               } else {
                 // Log an error if 'NAME' property is missing in passenger object
                 cy.task("log", `'NAME' property missing in passenger object at index ${index}`);
@@ -204,16 +225,14 @@ describe('IRCTC TATKAL BOOKING', () => {
 
 
 
-          // For Selecting "Book only if confirm berths are allotted."" as well as Auto Upgradation
+          // Auto Upgradation and Confirm Berths Options
+          // We use cy.get('body').then() only to safely check if they exist without failing the test if they don't
           cy.get('body').then((el) => {
-
-            if (el[0].innerText.includes('Book only if confirm berths are allotted')) {
-              cy.get(':nth-child(2) > .css-label_c').click()
-
+            if (el.text().includes('Book only if confirm berths are allotted')) {
+              cy.contains('label', 'Book only if confirm berths are allotted').click({force: true})
             }
-            if (el[0].innerText.includes('Consider for Auto Upgradation.')) {
-              cy.contains('Consider for Auto Upgradation.').click()
-
+            if (el.text().includes('Consider for Auto Upgradation')) {
+              cy.contains('label', 'Consider for Auto Upgradation').click({force: true})
             }
           })
 
@@ -277,7 +296,7 @@ describe('IRCTC TATKAL BOOKING', () => {
               // MAKE SURE UPI ID EXIST THEN PROCEED PLEASE FILL UPI_ID VALUE IN cypress/fixtures/passenger_data.json as something like this "123713278162@paytm"
               if (UPI_ID && isValidUpiId) {
                 cy.get('#ptm-upi').click()
-                cy.get('.brdr-box > :nth-child(2) > ._1WLd > :nth-child(1) > .xs-hover-box > ._Mzth > .form-ctrl').type(UPI_ID)
+                cy.get('.brdr-box > :nth-child(2) > ._1WLd > :nth-child(1) > .xs-hover-box > ._Mzth > .form-ctrl').type(UPI_ID, { delay: 0 })
                 cy.get(':nth-child(5) > section > .btn').click()
                 // Waiting For 2 Mins for the user to pay In Case --no-exit option is emitted
                 cy.wait(120000)

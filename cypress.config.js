@@ -5,6 +5,21 @@ module.exports = defineConfig({
 
   defaultCommandTimeout: 120000,
   // video: true,
+  blockHosts: [
+    '*google-analytics.com',
+    '*googletagmanager.com',
+    '*doubleclick.net',
+    '*adform.net',
+    '*youtube.com',
+    '*cdn.jsdelivr.net',
+    '*techlab-cdn.com',
+    '*go-mpulse.net',
+    '*unibotscdn.com',
+    '*vdo.ai',
+    '*adtrafficquality.google',
+    '*cloudflareinsights.com',
+    '*clarity.ms'
+  ],
 
   e2e: {
     setupNodeEvents(on, config) {
@@ -19,7 +34,8 @@ module.exports = defineConfig({
       });
     },
     chromeWebSecurity: false,
-    experimentalModifyObstructiveThirdPartyCode: true
+    experimentalModifyObstructiveThirdPartyCode: true,
+    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36'
   },
 });
 

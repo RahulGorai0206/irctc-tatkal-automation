@@ -5,6 +5,7 @@ import {
 } from "../utils";
 
 const MANUAL_CAPTCHA = Cypress.env("MANUAL_CAPTCHA");
+const ENABLE_CAPTCHA_CHECK = Cypress.env("ENABLE_CAPTCHA_CHECK") !== false;
 
 Cypress.on("uncaught:exception", (err, runnable) => {
     // returning false here prevents Cypress from failing the test
@@ -47,46 +48,71 @@ function performLogin(LOGGED_IN) {
                 !el[0].innerText.includes("Please Wait...")
             ) {
                 if (MANUAL_CAPTCHA) {
-                    cy.get("#captcha").focus();
+                    if (Cypress.$(".captcha-img").length > 0) {
+                        cy.get("#captcha").focus();
+                    } else {
+                        cy.task("log", "No captcha image found, waiting for manual interaction or clicking SIGN IN...");
+                    }
                     // Wait for user to manually enter captcha and login
-                    cy.get(".search_btn.loginText")
+                    cy.get(".search_btn.loginText", { timeout: 60000 })
                     .should("include.text", "Logout")
                     .then(() => {
                         performLogin(true);
                     });
                 } else {
-                    // Use the local server to solve the captcha
-                    cy.get(".captcha-img")
-                    .invoke("attr", "src")
-                    .then((value) => {
-                        // API call to retrieve captcha value
-                        cy.request({
-                            method: "POST",
-                            url: "http://localhost:5000/extract-text", // URL of the Flask server endpoint
-                            body: {
-                                image: value, // Assuming `value` is your base64 image string
-                            },
-                        }).then((response) => {
-                            const extractedText = response.body.extracted_text; // Access the extracted text from the server response
-                            cy.get("#captcha")
-                            .clear()
-                            .type(extractedText)
-                            .type("{enter}");
+                    // Use the local server to solve the captcha or login directly if missing
+                    cy.get("body").then(($body) => {
+                        if (ENABLE_CAPTCHA_CHECK && $body.find(".captcha-img").length > 0) {
+                            cy.get(".captcha-img")
+                            .invoke("attr", "src")
+                            .then((value) => {
+                                // API call to retrieve captcha value
+                                cy.request({
+                                    method: "POST",
+                                    url: "http://localhost:5000/extract-text",
+                                    body: {
+                                        image: value,
+                                    },
+                                }).then((response) => {
+                                    const extractedText = response.body.extracted_text;
+                                    
+                                    // Sometimes the captcha input field has a different selector
+                                    if ($body.find("#captcha").length > 0) {
+                                        cy.get("#captcha").clear().type(extractedText).type("{enter}");
+                                    } else {
+                                        cy.contains("SIGN IN").click();
+                                    }
 
-                            cy.get("body").then((el) => {
-                                if (el[0].innerText.includes("Invalid Captcha")) {
-                                    performLogin(false);
-                                } else if (el[0].innerText.includes("Logout")) {
-                                    performLogin(true);
-                                } else {
-                                    performLogin(false);
-                                }
+                                    cy.get("body").then((el) => {
+                                        if (el[0].innerText.includes("Invalid Captcha")) {
+                                            performLogin(false);
+                                        } else if (el[0].innerText.includes("Logout")) {
+                                            performLogin(true);
+                                        } else {
+                                            performLogin(false);
+                                        }
+                                    });
+                                });
                             });
-                        });
+                        } else {
+                            // No captcha image found, try clicking SIGN IN directly
+                            cy.task("log", "No captcha image found. Attempting to click SIGN IN directly.");
+                            cy.contains("SIGN IN").click();
+                            
+                            // Cypress will automatically retry until the Logout element is found or it times out
+                            cy.contains("Logout", { timeout: 60000 }).then(() => {
+                                cy.task("log", "Logged in successfully!");
+                                performLogin(true);
+                            });
+                        }
                     });
                 }
             } else {
-                performLogin(false);
+                // Neither Logout nor "FORGOT" is present. This usually means the page is loading or transitioning.
+                cy.task("log", "Waiting for page transition or loading...");
+                cy.contains("Logout", { timeout: 120000 }).then(() => {
+                    performLogin(true);
+                });
             }
         });
     }
@@ -138,33 +164,42 @@ function solveCaptcha() {
                     }
                 });
             } else {
-                cy.get(".captcha-img")
-                .invoke("attr", "src")
-                .then((value) => {
-                    // Use the local server to solve the captcha
-                    cy.request({
-                        method: "POST",
-                        url: "http://localhost:5000/extract-text", // URL of the Flask server endpoint
-                        body: {
-                            image: value, // Assuming `value` is your base64 image string
-                        },
-                    }).then((response) => {
-                        const extractedText = response.body.extracted_text;
-                        cy.get("#captcha")
-                        .clear()
-                        .type(extractedText)
-                        .type("{enter}");
+                cy.get("body").then(($body) => {
+                    if (ENABLE_CAPTCHA_CHECK && $body.find(".captcha-img").length > 0) {
+                        cy.get(".captcha-img")
+                        .invoke("attr", "src")
+                        .then((value) => {
+                            // Use the local server to solve the captcha
+                            cy.request({
+                                method: "POST",
+                                url: "http://localhost:5000/extract-text",
+                                body: {
+                                    image: value,
+                                },
+                            }).then((response) => {
+                                const extractedText = response.body.extracted_text;
+                                cy.get("#captcha")
+                                .clear()
+                                .type(extractedText)
+                                .type("{enter}");
 
-                        cy.get("body").then((el) => {
-                            if (el[0].innerText.includes("Payment Methods")) {
-                                cy.task("log", "Bypassed Captcha");
-                            } else {
-                                solveCaptcha();
-                            }
+                                cy.get("body").then((el) => {
+                                    if (el[0].innerText.includes("Payment Methods")) {
+                                        cy.task("log", "Bypassed Captcha");
+                                    } else {
+                                        solveCaptcha();
+                                    }
+                                });
+                            });
                         });
-                    });
+                        solveCaptcha();
+                    } else {
+                        cy.task("log", "No inner captcha found. Moving to payment if possible.");
+                        cy.contains("Continue", { matchCase: false }).click({ force: true });
+                        cy.wait(2000);
+                        solveCaptcha();
+                    }
                 });
-                solveCaptcha();
             }
         } else if (el[0].innerText.includes("Payment Methods")) {
             return;
